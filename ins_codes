@@ -1,0 +1,129 @@
+library(shiny)
+library(dplyr)
+library(plyr)
+library(shinyWidgets)
+library(ggplot2)
+#loading models
+load("Ageband_freq.rda")
+load("Ageband_sev.rda")
+ui<-fluidPage(
+  navbarPage(title= tags$div("PRICING DEVICE FOR HEALTH INSURANCE POLICIES",style="color:blue;"),selected = "uploaded data", 
+  
+        tabPanel(title=tags$div("Upload file ",style="color:green;"),
+             fluidPage(
+               fluidRow(
+                 tags$div(fileInput("file1","Choose a csv file",
+                       accept = c(
+                         "text/csv",
+                         "text/comma-separated-values,text/plain",
+                         ".csv")
+             )),align="center"),
+             tags$hr(), tags$div(checkboxInput("header", "Header", TRUE),align="center"),
+             tags$div(actionButton(inputId = "go",label = "Update"),align="center"),
+             tags$div(tableOutput("Data"),align="center")
+            
+             )),
+    tabPanel(title = tags$div("Age Band",style="color:green;"),
+             fluidPage(
+               fluidRow(
+             tags$div(tableOutput("agewise"))
+               )
+             )),
+    tabPanel(title=tags$div("Graphs before Smoothening",style="color:green;"),
+             fluidPage(
+               fluidRow(
+             tags$div(plotOutput("freqplot"),align="center"),
+             tags$div(plotOutput("sevplot"),align="center")
+             )
+             )),
+    tabPanel(title=tags$div("Premium Table",style="color:green;"),
+               sidebarLayout("Exponential Curve Fitting",
+                        fluidPage(
+                          fluidRow(align="center",
+                        tableOutput("Fitted_values"))
+                        )
+               )
+    ),
+    tabPanel(title=tags$div("Graphs after smoothening",style="color:green;"),
+             fluidPage(
+               fluidRow(align="center",
+                        plotOutput("Smfreq"),
+                        plotOutput("Smsev"))
+               
+               
+                                                                   
+                           )
+             )
+    )
+
+    )
+  
+
+
+server<-function(input,output)
+  {
+  
+  contents <-eventReactive(input$file1,{
+    read.csv(file=input$file1$datapath, header = input$header)})
+  
+  observeEvent(input$go,{
+    output$Data<-renderTable({contents()})})
+
+
+  bsm<-reactive({
+    ddply(contents(), .(A_BAND), summarise,Midpoint_age=mean(AGE), No_of_claims = sum(NOC), 
+          Exposure = sum(EXP),Gross_incurred_cost=sum(GIC),Frequency=(No_of_claims/Exposure),
+          Severity=(Gross_incurred_cost/No_of_claims),
+          BurningCost=(Frequency*Severity))    
+  })
+  
+  
+  output$agewise<-renderTable({
+    bsm()
+    })
+  output$freqplot<-renderPlot({ggplot(bsm(),aes(as.numeric(A_BAND),Frequency))+ geom_path()+
+      geom_line(linetype=1)+xlim(c("1-11","11-21","21-31","31-41","41-51",
+                                   "51-61","61-71"))+xlab("Age Band")+
+      ggtitle("Frequency before Smoothening")
+  })
+  output$sevplot<-renderPlot({ggplot(bsm(),aes(as.numeric(A_BAND),Severity))+ geom_path()+
+      geom_line(linetype=1)+xlim(c("1-11","11-21","21-31","31-41","41-51",
+                                   "51-61","61-71"))+xlab("Age Band")+
+      ggtitle("Severity before Smoothening")
+  })
+  sfm = exp(as.numeric(a_freq_exp$coefficients[2]))
+  sfb = exp(as.numeric(a_freq_exp$coefficients[1]))
+  ssm = exp(as.numeric(a_Sev_exp$coefficients[2]))
+  ssb = exp(as.numeric(a_Sev_exp$coefficients[1]))
+  
+  
+  values<-reactive(
+    
+    {bsm()%>%
+        summarise(A_BAND,smoothened_frequency=(sfm^(Midpoint_age)*sfb),
+                  smoothened_severity=(ssm^(Midpoint_age)*ssb),
+                  sm_burningcost=(smoothened_frequency*smoothened_severity),
+                  Gross_Premium=(sm_burningcost/(sum(contents()$GIC)/sum(contents()$GWP))))
+      
+              
+          })
+  
+  output$Fitted_values<-renderTable({values()})
+  
+  output$Smfreq<-renderPlot({ggplot(values(),aes(as.numeric(bsm()$A_BAND),smoothened_frequency))+ geom_path()+
+      geom_line(linetype=1)+xlim(c("1-11","11-21","21-31","31-41","41-51",
+                                   "51-61","61-71"))+xlab("Age Band")+
+      ggtitle("Frequency after Exponential Curve Fitting")
+    
+  })
+  output$Smsev<-renderPlot({ggplot(values(),aes(as.numeric(bsm()$A_BAND),smoothened_severity))+ geom_path()+
+      geom_line(linetype=1)+xlim(c("1-11","11-21","21-31","31-41","41-51",
+                                   "51-61","61-71"))+xlab("Age Band")+
+      ggtitle("Severity after Exponential Curve Fitting")
+    
+  })
+
+}
+
+
+shinyApp(ui,server)
